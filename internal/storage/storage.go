@@ -68,25 +68,46 @@ func NewStore(
 
 func (s *Store) initSchema(ctx context.Context) error {
 	query := `
-	CREATE TABLE IF NOT EXISTS price_history (
-		id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-		symbol VARCHAR(20) NOT NULL,
-		buy DOUBLE PRECISION NOT NULL,
-		sell DOUBLE PRECISION NOT NULL,
-		high_24h DOUBLE PRECISION NOT NULL,
-		low_24h DOUBLE PRECISION NOT NULL,
-		change_24h DOUBLE PRECISION NOT NULL,
-		price_timestamp TIMESTAMPTZ NOT NULL,
-		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-		UNIQUE (symbol, price_timestamp, buy, sell)
-	);
+		CREATE TABLE IF NOT EXISTS price_history (
+			id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+			symbol VARCHAR(20) NOT NULL,
+			buy DOUBLE PRECISION NOT NULL,
+			sell DOUBLE PRECISION NOT NULL,
+			high_24h DOUBLE PRECISION NOT NULL,
+			low_24h DOUBLE PRECISION NOT NULL,
+			change_24h DOUBLE PRECISION NOT NULL,
+			price_timestamp TIMESTAMPTZ NOT NULL,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			UNIQUE (symbol, price_timestamp, buy, sell)
+		);
 
-	CREATE INDEX IF NOT EXISTS idx_price_history_symbol_timestamp
-	ON price_history (symbol, price_timestamp DESC);
+		CREATE INDEX IF NOT EXISTS idx_price_history_symbol_timestamp
+			ON price_history (symbol, price_timestamp DESC);
+
+		CREATE TABLE IF NOT EXISTS merchants (
+			id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+			name VARCHAR(150) NOT NULL,
+			email VARCHAR(255) NOT NULL UNIQUE,
+			password_hash TEXT NOT NULL,
+			role VARCHAR(20) NOT NULL DEFAULT 'merchant'
+				CHECK (role IN ('merchant', 'admin')),
+			kyc_status VARCHAR(20) NOT NULL DEFAULT 'pending'
+				CHECK (kyc_status IN ('pending', 'verified', 'rejected')),
+			account_status VARCHAR(20) NOT NULL DEFAULT 'active'
+				CHECK (account_status IN ('active', 'suspended')),
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		);
+
+		CREATE INDEX IF NOT EXISTS idx_merchants_kyc_status
+			ON merchants (kyc_status);
+
+		CREATE INDEX IF NOT EXISTS idx_merchants_account_status
+			ON merchants (account_status);
 	`
 
 	if _, err := s.db.ExecContext(ctx, query); err != nil {
-		return fmt.Errorf("initialize price history schema: %w", err)
+		return fmt.Errorf("initialize database schema: %w", err)
 	}
 
 	return nil

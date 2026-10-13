@@ -2,75 +2,76 @@ package middleware
 
 import (
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"golang.org/x/time/rate"
 )
 
-type clientLimiter struct {
-	limiter  *rate.Limiter
-	lastseen time.Time
+type visitor struct {
+	requests  int
+	resetTime time.Time
 }
 
 type IPRateLimiter struct {
-	mu      sync.Mutex
-	clients map[string]*clientLimiter
-
-	rate  rate.Limit
-	burst int
+	mu       sync.Mutex
+	visitors map[string]*visitor
+	limit    int
+	window   time.Duration
 }
 
-func NewIPRateLimiter(requestPerSecond float64, burst int) *IPRateLimiter {
+func NewIPRateLimiter(limit int, burst int) *IPRateLimiter {
+	if limit <= 0 {
+		limit = 20
+	}
+
+	if burst <= 0 {
+		burst = 40
+	}
+
 	return &IPRateLimiter{
-		clients: make(map[string]*clientLimiter),
-		rate:    rate.Limit(requestPerSecond),
-		burst:   burst,
+		visitors: make(map[string]*visitor),
+		limit:    burst,
+		window:   time.Minute,
 	}
 }
 
-func (l *IPRateLimiter) getlimiter(ip string) *rate.Limiter {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	now := time.Now()
-
-	client, exists := l.clients[ip]
-
-	if !exists {
-		client = &clientLimiter{
-			limiter: rate.NewLimiter(l.rate, l.burst),
-		}
-
-		l.clients[ip] = client
-	}
-
-	client.lastseen = now
-
-	//   removing inactive entries
-	for key, entry := range l.clients {
-		if now.Sub(entry.lastseen) > 10*time.Minute {
-			delete(l.clients, key)
-		}
-	}
-
-	return client.limiter
-}
-
-func (l *IPRateLimiter) Middleware() gin.HandlerFunc {
+// Middleware returns a Gin-compatible rate-limiting handler.
+func (rl *IPRateLimiter) Middleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		ip := c.ClientIP()
-		limiter := l.getlimiter(ip)
+		now := time.Now()
 
-		if !limiter.Allow() {
-			c.Header("Retry-After", "1")
-			c.JSON(http.StatusTooManyRequests, gin.H{
+		rl.mu.Lock()
+
+		v, exists := rl.visitors[ip]
+		if !exists || !now.Before(v.resetTime) {
+			v = &visitor{
+				requests:  0,
+				resetTime: now.Add(rl.window),
+			}
+			rl.visitors[ip] = v
+		}
+
+		if v.requests >= rl.limit {
+			remaining := time.Until(v.resetTime)
+			retryAfter := int(remaining.Seconds())
+			if retryAfter < 1 {
+				retryAfter = 1
+			}
+
+			rl.mu.Unlock()
+
+			c.Header("Retry-After", strconv.Itoa(retryAfter))
+			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
 				"error": "rate limit exceeded",
 			})
-			c.Abort()
 			return
 		}
+
+		v.requests++
+		rl.mu.Unlock()
 
 		c.Next()
 	}
