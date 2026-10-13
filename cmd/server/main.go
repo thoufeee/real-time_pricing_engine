@@ -13,6 +13,7 @@ import (
 
 	"github.com/joho/godotenv"
 
+	"Real_TimePricingEngine/internal/auth"
 	"Real_TimePricingEngine/internal/feed"
 	"Real_TimePricingEngine/internal/pricing"
 	"Real_TimePricingEngine/internal/server"
@@ -76,7 +77,12 @@ func main() {
 
 	// Initialize WebSocket hub and HTTP router.
 	hub := pricingws.NewHub()
-	router := server.NewRouter(hub)
+	authService, err := auth.NewService(store)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	router := server.NewRouter(hub, authService)
 
 	port := os.Getenv("PORT")
 	if port == "" {
